@@ -16,9 +16,15 @@
 # specific language governing permissions and limitations
 # under the License.
 #
+
+import errno
+import logging
 import atexit, time
+from select import error as SelectError
 from compat import select, set, selectable_waiter
 from threading import Thread, Lock
+
+LOG = logging.getLogger("qpid.selector")
 
 class Acceptor:
 
@@ -116,7 +122,20 @@ class Selector:
       else:
         timeout = max(0, wakeup - time.time())
 
-      rd, wr, ex = select(self.reading, self.writing, (), timeout)
+      try:
+        rd, wr, ex = select(self.reading, self.writing, (), timeout)
+      except SelectError, e:
+        if e[0] == errno.EINTR:
+          continue
+        else:
+          LOG.error("Select error: %s.", e)
+          rd, wr, ex = [], [], []
+      except Exception, e:
+          LOG.error("Select error: %s.", e)
+          rd, wr, ex = [], [], []
+
+      if self.stopped:
+        break
 
       for sel in wr:
         if sel.writing():
@@ -132,8 +151,16 @@ class Selector:
         if w is not None and now > w:
           sel.timeout()
 
+  def stopAsync(self):
+    if not self.stopped:
+      self.stopped = True
+      self.wakeup()
+
   def stop(self, timeout=None):
-    self.stopped = True
-    self.wakeup()
-    self.thread.join(timeout)
-    self.thread = None
+    if not self.stopped:
+      self.stopped = True
+      self.wakeup()
+
+    if self.thread is not None:
+      self.thread.join(timeout)
+      self.thread = None

@@ -283,7 +283,10 @@ class Connection(Endpoint):
         raise Timeout("detach timed out")
     finally:
       if cleanup:
-        self._driver.stop()
+        try:
+          self._driver.stop()
+        except Exception, e:
+          log.error("Failed to close a connection: %s.", e)
       self._condition.gc()
 
   @synchronized

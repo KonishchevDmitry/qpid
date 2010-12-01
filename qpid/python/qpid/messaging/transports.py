@@ -17,14 +17,15 @@
 # under the License.
 #
 
+import errno
 from qpid.util import connect
 
 TRANSPORTS = {}
 
 class tcp:
 
-  def __init__(self, host, port):
-    self.socket = connect(host, port)
+  def __init__(self, host, port, timeout = None):
+    self.socket = connect(host, port, timeout)
 
   def fileno(self):
     return self.socket.fileno()
@@ -36,10 +37,20 @@ class tcp:
     return writing
 
   def send(self, bytes):
-    return self.socket.send(bytes)
+    while True:
+      try:
+        return self.socket.send(bytes)
+      except EnvironmentError, e:
+        if e.errno != errno.EINTR:
+          raise e
 
   def recv(self, n):
-    return self.socket.recv(n)
+    while True:
+      try:
+        return self.socket.recv(n)
+      except EnvironmentError, e:
+        if e.errno != errno.EINTR:
+          raise e
 
   def close(self):
     self.socket.close()
@@ -54,8 +65,8 @@ except ImportError:
 else:
   class tls:
 
-    def __init__(self, host, port):
-      self.socket = connect(host, port)
+    def __init__(self, host, port, timeout = None):
+      self.socket = connect(host, port, timeout)
       self.tls = wrap_socket(self.socket)
       self.socket.setblocking(0)
       self.state = None

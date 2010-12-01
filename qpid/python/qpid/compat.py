@@ -17,7 +17,9 @@
 # under the License.
 #
 
+import errno
 import sys
+import time
 
 try:
   set = set
@@ -36,6 +38,8 @@ except ImportError:
   def format_exc():
     return "".join(traceback.format_exception(*sys.exc_info()))
 
+from select import error as SelectError
+
 if tuple(sys.version_info[0:2]) < (2, 4):
   from select import select as old_select
   def select(rlist, wlist, xlist, timeout=None):
@@ -50,7 +54,21 @@ class BaseWaiter:
 
   def wait(self, timeout=None):
     if timeout is not None:
-      ready, _, _ = select([self], [], [], timeout)
+      ready = False
+      end_time = time.time() + timeout
+
+      while True:
+        timeout = end_time - time.time()
+        if timeout <= 0:
+          break
+
+        try:
+          ready, _, _ = select([self], [], [], timeout)
+        except SelectError, e:
+          if e[0] != errno.EINTR:
+            raise
+        else:
+          break
     else:
       ready = True
 

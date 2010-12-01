@@ -38,13 +38,11 @@ except ImportError:
     def close(self):
       self.sock.close()
 
-def connect(host, port):
+def connect(host, port, timeout = None):
   sock = socket.socket()
+  sock.settimeout(timeout)
   sock.connect((host, port))
-  sock.setblocking(1)
-  # XXX: we could use this on read, but we'd have to put write in a
-  # loop as well
-  # sock.settimeout(1)
+  sock.setblocking(False)
   return sock
 
 def listen(host, port, predicate = lambda: True, bound = lambda: None):

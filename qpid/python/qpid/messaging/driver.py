@@ -341,7 +341,7 @@ class Driver:
     self.log_id = "%x" % id(self.connection)
     self._lock = self.connection._lock
 
-    self._selector = Selector.default()
+    self._selector = Selector()
     self._attempts = 0
     self._delay = self.connection.reconnect_interval_min
     self._reconnect_log = self.connection.reconnect_log
@@ -375,12 +375,13 @@ class Driver:
     self._selector.wakeup()
 
   def start(self):
+    self._selector.start()
     self._selector.register(self)
 
   def stop(self):
     self._selector.unregister(self)
-    if self._transport:
-      self.st_closed()
+    self._selector.stopAsync()
+    self.st_closed()
 
   def fileno(self):
     return self._transport.fileno()
@@ -401,6 +402,11 @@ class Driver:
 
   @synchronized
   def readable(self):
+    # This method can be called when the connection is already closed because
+    # of race conditions between Driver and Selector.
+    if not self.reading():
+      return
+
     try:
       data = self._transport.recv(64*1024)
       if data is None:
@@ -452,12 +458,12 @@ class Driver:
     status = self.engine.status()
     return getattr(self, "st_%s" % status.lower())()
 
+  @synchronized
   def st_closed(self):
-    # XXX: this log statement seems to sometimes hit when the socket is not connected
-    # XXX: rawlog.debug("CLOSE[%s]: %s", self.log_id, self._socket.getpeername())
-    self._transport.close()
-    self._transport = None
-    self.engine = None
+    if self._transport:
+      self._transport.close()
+      self._transport = None
+      self.engine = None
     return True
 
   def st_open(self):
@@ -465,6 +471,11 @@ class Driver:
 
   @synchronized
   def writeable(self):
+    # This method can be called when the connection is already closed because
+    # of race conditions between Driver and Selector.
+    if not self.writing():
+      return
+
     notify = False
     try:
       n = self._transport.send(self.engine.peek())
@@ -501,7 +512,10 @@ class Driver:
         if self.connection._connected and not self.connection.error:
           self.connect()
       else:
-        self.engine.dispatch()
+        # This method can be called when the connection is already closed because
+        # of race conditions between Driver and Selector.
+        if self.engine is not None:
+          self.engine.dispatch()
     except HeartbeatTimeout, e:
       self.close_engine(e)
     except:
@@ -523,7 +537,7 @@ class Driver:
       rawlog.debug("OPEN[%s]: %s:%s", self.log_id, host, port)
       trans = transports.TRANSPORTS.get(self.connection.transport)
       if trans:
-        self._transport = trans(host, port)
+        self._transport = trans(host, port, self.connection.heartbeat)
       else:
         raise ConnectError("no such transport: %s" % self.connection.transport)
       if self._retrying and self._reconnect_log:
